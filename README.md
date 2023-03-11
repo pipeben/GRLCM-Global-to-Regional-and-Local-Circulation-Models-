@@ -10,3 +10,5 @@ Several GIS (Geographical Information Systems) processes are required to bring G
 GRLCM package makes it all easier by allowing you to interact with all tese tools in one platform. You need to upload a GCM output and follow the steps to bring it to your study area
 
 The final proudct is a netCdf or raster file ready to be used for your research
+
+You might also be interested in the Bathymetric Projection code https://github.com/pipeben/Bathymetric-Projection
