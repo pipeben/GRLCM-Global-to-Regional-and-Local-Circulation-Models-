@@ -1,4 +1,4 @@
-[text](https://github.com/pipeben/Bathymetric-Projection) 
+         https://github.com/pipeben/Bathymetric-Projection 
 
 # This R-script provides the codes and explanation of GIS tools needed to 
 # perform Bathymetric Projection (BP) on environmental ocean variables measured 
