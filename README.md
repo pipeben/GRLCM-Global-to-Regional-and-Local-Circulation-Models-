@@ -1,5 +1,7 @@
 # GRLCM package - Global to Regional and Local Circulation Models
 
+(Note: You might also be interested in the Bathymetric Projection code https://github.com/pipeben/Bathymetric-Projection)
+
 This is an R-code that allows to easily manage GIS processes for bringing General Circulation Models (GCM) into Regional or Local Circulation Models (RCM or LCM).
 It includes all necessary 
 
@@ -11,4 +13,4 @@ GRLCM package makes it all easier by allowing you to interact with all tese tool
 
 The final proudct is a netCdf or raster file ready to be used for your research
 
-You might also be interested in the Bathymetric Projection code https://github.com/pipeben/Bathymetric-Projection
+
