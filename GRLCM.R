@@ -5,7 +5,7 @@ library(shinyFiles) # for the buttons, e.g. 'shinyDirButton'
 library(miniUI)     # package for Shiny UI Widgets for small screens
 # library(shinyBS)    # 
 
-################################################################################
+###### ##########################################################################
 rm(list = ls())
 cat("\014")
 graphics.off()
