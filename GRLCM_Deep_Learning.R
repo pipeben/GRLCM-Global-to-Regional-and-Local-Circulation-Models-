@@ -3,6 +3,39 @@ library(tensorflow)
 library(keras)
 library(raster)
 
+install.packages("downloader")
+
+# Function to download GCM data
+download_gcm_data <- function(variable) {
+  base_url <- "https://example.com/data/"  # Replace with the actual base URL
+  
+  # Create a list of GCMs and their corresponding files
+  gcm_files <- list(
+    "GCM1" = paste0(base_url, "gcm1_", variable, ".nc"),
+    "GCM2" = paste0(base_url, "gcm2_", variable, ".nc"),
+    "GCM3" = paste0(base_url, "gcm3_", variable, ".nc")
+    # Add more GCMs and their URLs as needed
+  )
+  
+  # Download the GCM files
+  for (gcm in names(gcm_files)) {
+    url <- gcm_files[[gcm]]
+    dest_file <- paste0(gcm, "_", variable, ".nc")
+    downloader::download(url, destfile = dest_file)
+    message(paste("Downloaded", dest_file))
+  }
+  
+  message("GCM data download complete.")
+}
+
+# Download GCM data for temperature
+download_gcm_data("temperature")
+
+# Download GCM data for chlorophyll
+download_gcm_data("chlorophyll")
+
+
+
 # Simulated data generation
 set.seed(123)
 raster_dim <- c(100, 100)  # Dimensions of the raster
