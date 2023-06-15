@@ -1,11 +1,11 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 authors:
-- family-names: "Benavides"
+- family-names: "Benavides-Martínez"
   given-names: "Iván Felipe"
   orcid: "https://orcid.org/0000-0002-1139-3909"
 title: "Global to Regional and Local Circulation Models (GRLCM)"
 version: 1.0
-doi: 10.5281/zenodo.1234
+doi: https://doi.org/10.5281/zenodo.8040675
 date-released: 2022-12-18
 url: "https://github.com/pipeben/GRLCM-Global-to-Regional-and-Local-Circulation-Models-/tree/main"
