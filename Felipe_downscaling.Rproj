@@ -1,13 +1,932 @@
-Version: 1.0
+detachAllPackages <- function() {
+  basic.packages <- c("package:stats","package:graphics","package:grDevices","package:utils","package:datasets","package:methods","package:base")
+  package.list <- search()[ifelse(unlist(gregexpr("package:",search()))==1,TRUE,FALSE)]
+  package.list <- setdiff(package.list,basic.packages)
+  if (length(package.list)>0)  for (package in package.list) detach(package, character.only=TRUE)
+}
 
-RestoreWorkspace: Default
-SaveWorkspace: Default
-AlwaysSaveHistory: Default
+detachAllPackages()
 
-EnableCodeIndexing: Yes
-UseSpacesForTab: Yes
-NumSpacesForTab: 2
-Encoding: UTF-8
+library(ncdf4)
+# ibrary(tidyverse)  # because who can live without the tidyverse?
+library(shiny)      # for the miniGadgets
+library(shinyFiles) # for the buttons, e.g. 'shinyDirButton'
+library(miniUI)     # package for Shiny UI Widgets for small screens
+# library(shinyBS)    # 
 
-RnwWeave: Sweave
-LaTeX: pdfLaTeX
+################################################################################
+rm(list = ls())
+cat("\014")
+graphics.off()
+################################################################################
+
+
+################################################################################
+################################################################################
+###  - create functions
+################################################################################
+################################################################################
+
+# Function 2: define function to loadnetcdf 
+if (exists("FUNC_load")) { rm(FUNC_load) }
+FUNC_load = function()
+{
+  # if (exists("temp.nc")) { rm(temp.nc) }
+  
+  ui <- miniUI::miniPage(
+    miniUI::gadgetTitleBar("Select and load netcdf data"),
+    miniUI::miniTabstripPanel(
+      miniUI::miniTabPanel("Load netcdf", 
+                           icon = shiny::icon("folder-open"),
+                           miniUI::miniContentPanel(
+                             # Input: Select a file ----
+                             shiny::fileInput("read_netcdf", "Choose one netcdf (*.nc) file",
+                                              multiple = TRUE,
+                                              placeholder = "No file selected",
+                                              accept = c(".nc")),
+                             shiny::uiOutput("wordOneButton")
+                           )
+      )
+    )
+  )
+  
+  server <- function(input, output, session) {
+    ############################################################################
+    # By default, Shiny limits file uploads to 5MB per file. You can modify this 
+    # limit by using the shiny.maxRequestSize option. For example, adding 
+    #
+    # options(shiny.maxRequestSize=30*1024^2) 
+    #
+    # to the top of server.R would increase the limit to 30 MB.
+    
+    options(shiny.maxRequestSize=10000*1024^2,   # 10000 = 10000 MB = 10 GB
+            shiny.trace=TRUE)
+    ############################################################################
+    ##  - observe file input widget
+    output$chosen_file <- renderPrint({
+      str(input$read_netcdf)
+    })
+    
+    # path_test <- paste0(input$fileInput)
+    # shiny::observeEvent(input$read_netcdf)
+    
+    reval <<- reactive(input$read_netcdf)
+    
+    output$wordOneButton <- renderUI({
+      
+      # Validate that reval() is distinct than ""
+      shiny::validate(
+        shiny::need(reval() != "", message = "")
+      )
+      
+      shiny::actionButton("loadfile", 
+                          # label = reval()[1]
+                          label = "Load chosen netcdf file",
+                          style="color: #fff; background-color: #337ab7; border-color: #2e6da4"
+      )
+    })
+    
+    ############################################################################
+    ##  - observe action button 'Load chosen netcdf file'
+    
+    # load nc file after click event on button
+    shiny::observeEvent(input$loadfile, {
+      # here content to load nc file
+      temp.nc <<- ncdf4::nc_open(paste0(input$read_netcdf, sep=""))
+      chosen_nc_file <<- paste(input$read_netcdf)
+      return(temp.nc)
+      
+    })  # ** End of 'observeEvent(load_nc_file, {' ** #
+    
+    
+    ##############################################################
+    ### - Cancel / Stop button
+    shiny::observeEvent(input$cancel, {
+      stopApp(TRUE)
+    })
+    
+    shiny::observeEvent(input$done, {
+      stopApp()
+    })
+  }
+  
+  # shiny::runGadget(shiny::shinyApp(ui, server), 
+  #                  # viewer = shiny::paneViewer()
+  #                  shiny::dialogViewer(dialogName="Test", width = 600, height = 600)
+  #                  )
+  shiny::runGadget(ui, server,viewer = shiny::dialogViewer("Show selected dependant variable in map", 
+                                                           width = 800, 
+                                                           height = 800))
+  #-----------------------------------------------------------------------------
+  path <<- paste(getwd(), chosen_nc_file[1], sep="/")
+}
+
+# FUNC_load()
+################################################################################
+################################################################################
+# Function 3: function to create tables from the metadata of variables and dimensions
+if (exists("FUNC_variable_and_dims_data")) { rm(FUNC_variable_and_dims_data) }
+FUNC_variable_and_dims_data = function(nc_data)
+{
+  # get variable names
+  var_names <<- as.character(unlist(attributes(temp.nc$var)))
+  
+  # get dimension names
+  dim_names <<- as.character(unlist(attributes(temp.nc$dim)))
+  
+  ##############################################################################
+  # Get the time variable. 
+  time_name <<- dim_names[which(dim_names %in% c("time",
+                                                 "Time",
+                                                 "datetime",
+                                                 "Datetime",
+                                                 "date",
+                                                 "Date"))[1]] # Pick the time dimension
+  time <- ncdf4::ncvar_get(temp.nc, time_name)
+  ##################
+  
+  tunits<-ncdf4::ncatt_get(temp.nc, time_name, attname="units")
+  
+  tustr<-strsplit(tunits$value, " ")
+  dates<<-as.Date(time,origin=unlist(tustr)[3])
+  
+  time_and_dates <<- as.data.frame(cbind("netcdf_time"=(ncdf4::ncvar_get(temp.nc, time_name)),
+                                         "date_yy_mm_dd"= as.character(dates)))
+  
+  ########################################################
+  # create an empty data frame to store variable metadata results
+  nc_depend_var_metadata <- data.frame(short_name=character(),
+                                       long_name=character(), 
+                                       unit=character(),
+                                       nr_of_dimensions=as.numeric(),
+                                       names_of_dimensions=character(),
+                                       dim_lengths=character(),
+                                       stringsAsFactors=FALSE)
+  i <- 1
+  for (i in 1:length(var_names)){
+    print(var_names[i])
+    nc_depend_var_metadata[c(nrow(nc_depend_var_metadata)+1),1] <- var_names[i]
+    nc_depend_var_metadata[c(nrow(nc_depend_var_metadata)),2] <- temp.nc$var[[i]]$longname
+    nc_depend_var_metadata[c(nrow(nc_depend_var_metadata)),3] <- temp.nc$var[[i]]$units
+    nc_depend_var_metadata[c(nrow(nc_depend_var_metadata)),4] <- temp.nc$var[[i]]$ndims
+    
+    if(exists("temp_001")) { rm(temp_001) }
+    temp_001 <- temp.nc$var[[i]]$dim
+    j <- 1
+    dim_names <- c()
+    dim_lengths <- c()
+    for (j in 1:length(temp_001)) {
+      dim_names <- c(dim_names, temp_001[[j]]$name)
+      dim_lengths <- c(dim_lengths, as.character(temp_001[[j]]$len))
+    }
+    nc_depend_var_metadata[c(nrow(nc_depend_var_metadata)),5] <- paste0(as.character(dim_names), collapse=", ")
+    nc_depend_var_metadata[c(nrow(nc_depend_var_metadata)),6] <- paste0(as.character(dim_lengths), collapse=", ")
+    rm(dim_names, j, temp_001)
+  }
+  
+  var_metadata <<- nc_depend_var_metadata
+  
+  ########################################################
+  ##############################################################################
+  time_int <- c()
+  for (i in temp.nc$dim$time$len:2){
+    print(i)
+    time_int <- c(time_int, c(temp.nc$dim$time$vals[i]-temp.nc$dim$time$vals[i-1]))
+    time_int <- unique(time_int)
+  }
+  
+  ##############################################################################
+  ntcalendar <- c()
+  
+  if (is.null(temp.nc$dim[[time_name]]$calendar)) {
+    ntcalendar <- "WARNING: The netcdf does not contain any information regarding the calendar used !!!"
+    happy <- "No"
+    nc_dim_time_metadata <- data.frame(calendar= c("standard"),
+                                       data_count =as.integer(temp.nc$dim$time$len),
+                                       unit_of_time = c(strsplit(temp.nc$dim$time$units, " ")[[1]][1]),
+                                       start_date_and_time = c(gsub("days since ", "", temp.nc$dim$time$units)),
+                                       date_range_year_month_day = c(paste0(as.character(range(dates)), collapse = " to ")),
+                                       time_interval = c(paste(sort(time_int), collapse = ", ")),
+                                       first_5_dates = c(paste(dates[1:5], collapse = ", ")),
+                                       stringsAsFactors=FALSE)
+    
+    
+  } else {
+    ntcalendar <- temp.nc$dim[[time_name]]$calendar
+    happy <- "Yes"
+    nc_dim_time_metadata <- data.frame(calendar= c(temp.nc$dim[[time_name]]$calendar),
+                                       data_count =as.integer(temp.nc$dim$time$len),
+                                       unit_of_time = c(strsplit(temp.nc$dim$time$units, " ")[[1]][1]),
+                                       start_date_and_time = c(gsub("days since ", "", temp.nc$dim$time$units)),
+                                       date_range_year_month_day = c(paste0(as.character(range(dates)), collapse = " to ")),
+                                       time_interval = c(paste(sort(time_int), collapse = ", ")),
+                                       first_5_dates = c(paste(dates[1:5], collapse = ", ")),
+                                       stringsAsFactors=FALSE)
+  }
+  
+  # The netcdf does not contain any information regarding the calendar used (keyword: number of days in the year, leap years etc...)
+  
+  
+  #
+  # ntstep <-temp.nc$dim[[time_name]]$len
+  # ntcalendar <<- temp.nc$dim[[time_name]]$calendar
+  ########################################################
+  # create an empty data frame to store dimensions metadata results
+  
+  nc_dim_var_metadata <- data.frame(name=character(),
+                                    dim_length=integer(), 
+                                    dim_unit=character(),
+                                    dim_range=character(),
+                                    stringsAsFactors=FALSE)
+  
+  i <- 1
+  for (i in 1:length(temp.nc$dim)){
+    print(i)
+    print(temp.nc$dim[[i]]$name)
+    
+    # if (exists("")) { rm() }
+    nc_dim_var_metadata[c(nrow(nc_dim_var_metadata)+1), 1] <- temp.nc$dim[[i]]$name
+    nc_dim_var_metadata[c(nrow(nc_dim_var_metadata)), 2] <- temp.nc$dim[[i]]$len
+    nc_dim_var_metadata[c(nrow(nc_dim_var_metadata)), 3] <- temp.nc$dim[[i]]$units
+    nc_dim_var_metadata[c(nrow(nc_dim_var_metadata)), 4] <- paste0(as.character(range(temp.nc$dim[[i]]$vals)), collapse=", ")
+  }
+  
+  # nc_dim_var_metadata$time_date_range <- NA
+  # 
+  # nc_dim_var_metadata$time_date_range[nc_dim_var_metadata$name == 'time'] <- paste0("Year_Month_day: ", as.character(range(dates)), collapse = " to ")
+  # 
+  dim_metadata <<- nc_dim_var_metadata
+  ##############################################################################
+  # nc_dim_time_metadata <- data.frame(calendar=as.character(),
+  #                                    data_count =as.integer(),
+  #                                    unit_of_time = as.character(),
+  #                                    start_date_and_time = as.character(),
+  #                                    date_range_year_month_day = as.character(),
+  #                                    time_interval = as.character(),
+  #                                    first_5_dates = as.character(),
+  #                                    stringsAsFactors=FALSE)
+  dim_calendar <<- nc_dim_var_metadata
+  ##############################################################################
+  ###  - ui
+  ui <- miniPage(
+    gadgetTitleBar("Netcdf (nc) metadata of variables and dimensions"), 
+    miniContentPanel(
+      h5(strong("Metadata of the netcdf variables")),
+      div(tableOutput("var_table"), style = "font-size:92%"),
+      br(),
+      h5(strong("Metadata of the netcdf dimensions")),
+      div(tableOutput("dim_table"), style = "font-size:92%"),
+      ####
+      conditionalPanel(
+        condition = "input.choice === 'No'",
+        # p("WARNING: The netcdf does not contain information about the calendar used !!! Do you want to use the standard calendar?"),
+        # radioButtons("choice", "Show Conditional Panel?", choices = c("Yes", "No"), selected = happy)
+        verbatimTextOutput("calendar"),
+        tags$head(tags$style("#calendar{color: red;
+                font-size: 20px;
+                font-style: bold;}")),
+        conditionalPanel(
+          condition = "input.choice === 'No'",
+          p("Without calendar information no date information can be extracted from the netcdf!"),
+          # radioButtons("choice", "Show Conditional Panel?", choices = c("Yes", "No"), selected = happy)
+        ),
+        hr(),
+        selectInput("choice", "Do you want to use the standard calendar?",
+                    choices = c("Yes", "No"),
+                    selected = happy
+        ),
+        br(),
+        p("Mixed Gregorian/Julian calendar as defined by UDUNITS. This is the default (a deprecated alternative name for this calendar is gregorian).  
+          Number of Days: 365 or 366 (leap year). Leap Year Rule: Every year divisible by 4, except for years divisible by 100 unless also divisible by 400."),
+        htmlOutput("linkText")
+      ), # ** End of 'conditionalPanel(' ** #
+      ##########################################################################
+      
+      conditionalPanel(
+        condition = "input.choice === 'Yes'",
+        br(),
+        hr(),
+        p("A calendar information is given !!!!!"),
+        # 
+        # ntcalendar <<- "standard",
+        # ##########################
+        # nc_dim_time_metadata <- data.frame(calendar="standard",
+        #                                    data_count =as.integer(temp.nc$dim$time$len),
+        #                                    unit_of_time = c(strsplit(temp.nc$dim$time$units, " ")[[1]][1]),
+        #                                    start_date_and_time = c(gsub("days since ", "", temp.nc$dim$time$units)),
+        #                                    date_range_year_month_day = c(paste0(as.character(range(dates)), collapse = " to ")),
+        #                                    time_interval = paste(sort(time_int), collapse = ", "),
+        #                                    first_5_dates = c(paste(dates[1:5], collapse = ", ")),
+        #                                    stringsAsFactors=FALSE),
+        ##########################
+        h5(strong("Metadata of the netcdf calendar and time")),
+        div(tableOutput("calendar_time"), style = "font-size:92%")
+        
+      ) # ** End of 'conditionalPanel(' ** #
+      ##########################################################################
+      
+    )
+  )
+  
+  ##############################################################################
+  ###  - server
+  
+  server <- function(input, output, session){
+    
+    output$var_table <- renderTable(nc_depend_var_metadata)
+    output$dim_table <- renderTable(nc_dim_var_metadata)
+    
+    # Observe the choice and toggle the visibility of the conditional panel
+    observeEvent(input$choice, {
+      if (input$choice == "Yes") {
+        shinyjs::show("conditionalPanel")
+        ntcalendar <<- "standard"
+        ###
+      } else {
+        shinyjs::hide("conditionalPanel")
+      }
+    })
+    
+    # output calendar information text
+    output$calendar <- renderText({
+      paste(ntcalendar)
+    })
+    
+    output$calendar_time <- renderTable(nc_dim_time_metadata)
+    
+    # output link text to further information about time an calendar in netcdf
+    output$linkText <- renderUI({
+      HTML(paste("For more information, please", 
+                 tags$a(
+                   href = "https://cfconventions.org/Data/cf-conventions/cf-conventions-1.7/build/ch04s04.html",
+                   target = "_blank",
+                   style = "color: blue; text-decoration: underline;",
+                   onclick = "window.open('https://cfconventions.org/Data/cf-conventions/cf-conventions-1.7/build/ch04s04.html', '_blank', 'width=800,height=600'); return false;",
+                   "see here"
+                 )
+      ))
+    })
+    
+    ##############################################################
+    ### - Cancel / Stop button
+    shiny::observeEvent(input$cancel, {
+      stopApp(TRUE)
+      
+    })
+    
+    shiny::observeEvent(input$done, {
+      stopApp(TRUE)
+    })
+  } # ** End of 'server' ** #
+  
+  ##############################################################################
+  ###   - run gadget
+  # shiny::runGadget(ui, server,
+  #                  viewer = shiny::dialogViewer("Show metadata of variables and dimensions",
+  #                                               width = 1500,
+  #                                               height = 1000))
+  shinyApp(ui, server)
+  # runGadget(shinyApp(ui, server), viewer = browserViewer(browser = getOption("browser")))
+}  # ***  End of 'FUNC_variable_and_dims_data = function(' ***
+
+# FUNC_variable_and_dims_data()  # delete later
+
+
+################################################################################
+################################################################################
+# Function 4: function to select variable 
+
+if (exists("FUNC_define_var_and_dims_to_plot")) { rm(FUNC_define_var_and_dims_to_plot) }
+FUNC_define_var_and_dims_to_plot = function()
+{
+  library(ncdf4)
+  library(raster)
+  library(shiny)
+  # library(stars)  # Make sure you have the 'stars' package installed
+  library(shinycssloaders)
+  library(rasterVis)
+  library(ggplot2)
+  
+  
+  # # setwd("E:/shiny_project_22_2022/data")
+  # path <- choose.files()
+  # dirname(getwd())
+  if (!exists("path")){
+    setwd(dirname(path))
+  }
+  
+  # Load the NetCDF file and extract dimension information
+  if (exists("temp.nc")) {
+    nc <- temp.nc
+  } else {
+    nc <- ncdf4::nc_open(path)
+  }
+  
+  var_with_unit <<- var_metadata[var_metadata$unit != "",]
+  choices_list <- c()
+  for (i in 1:nrow(var_with_unit)) {
+    choices_list <- c(choices_list, 
+                      paste0(var_with_unit$short_name[i], " = ", var_with_unit$long_name[i], sep="") )
+  }
+  
+  
+  ########################################################
+  # create an empty data frame to store dimensions metadata results
+  nc_dim_metadata <- data.frame(name=character(),
+                                dim_length=integer(),
+                                dim_unit=character(),
+                                dim_range=character(),
+                                stringsAsFactors=FALSE)
+  
+  i <- 1
+  for (i in 1:length(nc$dim)){
+    print(i)
+    print(nc$dim[[i]]$name)
+    
+    # if (exists("")) { rm() }
+    nc_dim_metadata[c(nrow(nc_dim_metadata)+1), 1] <- nc$dim[[i]]$name
+    nc_dim_metadata[c(nrow(nc_dim_metadata)), 2] <- nc$dim[[i]]$len
+    nc_dim_metadata[c(nrow(nc_dim_metadata)), 3] <- nc$dim[[i]]$units
+    nc_dim_metadata[c(nrow(nc_dim_metadata)), 4] <- paste0(as.character(range(nc$dim[[i]]$vals)), collapse=", ")
+  }
+  
+  dim_metadata <<- nc_dim_metadata
+  dims_with_unit <<- dim_metadata[dim_metadata$dim_unit != "",]
+  # #-----------------------------------------------------------------------------
+  
+  ##############################################################################
+  # ####  Here the desired variable must be known !!!!!!!!!!!!!!!!!!!!!!!
+  # 
+  kotz <- var_with_unit$short_name[1]
+  v3 <- eval(parse(text = paste("nc$var$", kotz, sep="")))
+  ndims   <- v3$ndims
+  
+  filtered_names <- c(dims_with_unit$name)
+  # rm(test_1000)
+  
+  ##############################################################################
+  ####  Remove names that stand for longitude and latitude from dimension list
+  drop_name_1 <- v3$dim[[1]]$name
+  drop_name_2 <- v3$dim[[2]]$name
+  
+  must_rotate <- FALSE
+  
+  longitude <- ncvar_get(nc, drop_name_1)
+  if(max(longitude)>=185) {
+    must_rotate <- TRUE
+  }
+  
+  filtered_names <- filtered_names[-c(which(filtered_names %in% c(drop_name_1, drop_name_2)))]
+  rm(drop_name_1, drop_name_2)
+  
+  ##############################################################################
+  dimension_names <- filtered_names
+  
+  ##############################################################################
+  # Get the time variable.
+  
+  time_name <- v3$dim[[ndims]]$name    # Remember timelike dim is always the LAST dimension!
+  time <- ncdf4::ncvar_get(nc, time_name)
+  
+  ##################
+  
+  tunits<-ncdf4::ncatt_get(nc, time_name, attname="units")
+  
+  tustr<-strsplit(tunits$value, " ")
+  dates<<-as.Date(time,origin=unlist(tustr)[3])
+  
+  time_and_dates <<- as.data.frame(cbind("netcdf_time"=(ncdf4::ncvar_get(nc, time_name)),
+                                         "date_yy_mm_dd"= as.character(dates)))
+  #-----------------------------------------------------------------------------
+  # create dimension table with choice ID and values with unit
+  i <- 1
+  for (i in filtered_names) {
+    if(i %in% c(c("time","Time",
+                  "datetime","Datetime",
+                  "date","Date",
+                  "timestamp", "Timestamp",
+                  "timedate", "Timedate",
+                  "time_dimension", "Time_dimension",
+                  "time_index", "Time_index",
+                  "time_variable", "Time_variable"))){
+      time_table <- as.data.frame(cbind("ID" = c(1:nrow(time_and_dates)),
+                                        "integer" = time_and_dates$netcdf_time,
+                                        "values" = time_and_dates$date_yy_mm_dd))
+    } else {
+      # print(i)
+      assign(paste0(i, "_table"), as.data.frame(cbind("ID" = 1:length(ncvar_get(nc, i)),
+                                                      "values" = paste(round(ncvar_get(nc, i),2), dim_metadata[dim_metadata$name==i,"dim_unit"], sep=" ")
+      )
+      )
+      )
+    }
+  }
+  created_table_list <- c(ls(pattern="_table"))
+  #-----------------------------------------------------------------------------
+  dimensions <- nc$dim
+  dimension_names <- filtered_names
+  dimension_choices <- lapply(dimension_names, function(dimension_name) {
+    dim_obj <- dimensions[[dimension_name]]
+    choices <- seq_len(dim_obj$len)
+    return(choices)
+  })
+  # ncdf4::nc_close(nc)
+  
+  ##############################################################################
+  ##############################################################################
+  ##############################################################################
+  ##############################################################################
+  
+  #-----------------------------------------------------------------------------
+  rm( list=setdiff(ls(), c("path",
+                           "dim_metadata",
+                           "var_metadata",
+                           "nc",
+                           "kotz",
+                           "filtered_names",
+                           "dimension_names",
+                           "dimension_choices",
+                           "created_table_list",
+                           "must_rotate",
+                           "choices_list",
+                           c(created_table_list) ) ) )
+  
+  
+  #  define ui
+  ui <- miniUI::miniPage(
+    ############################################################################
+    tags$head(
+      tags$script(
+        HTML(
+          "
+        Shiny.addCustomMessageHandler('resetcreate_button', function(message) {
+          $('#create_button').val(0);
+        });
+        "
+        )
+      )
+    ),
+    ############################################################################
+    miniUI::gadgetTitleBar("Please choose a response variable and the dimension(s)"),
+    miniUI::miniContentPanel(
+      #-----------------------------------------
+      sidebarLayout(
+        sidebarPanel(
+          shiny::selectizeInput(
+            inputId ="select_var",
+            label = "Select a response variable",
+            choices = choices_list,
+            multiple = TRUE,
+            width = '100%',
+            selected = choices_list[1],
+            options = list(maxItems = 1)),
+          #-----------------------------------------------------------------------
+          uiOutput("dimension_inputs"),
+          actionButton("create_button", "Create and plot raster")
+        ),
+        mainPanel(
+          textOutput("selected_dimensions"),
+          conditionalPanel(
+            condition = "input.create_button > 0",
+            style = "display: none;",
+            withSpinner( plotOutput(outputId = 'raster_plot') )
+          )
+        ) # ** End of 'mainPanel(' **
+        
+      ),  # ** End of 'sidebarPanel(' **
+      
+    )
+  ) # ** End of 'ui <- miniUI::miniPage(' **
+  
+  ##############################################################################
+  # define server
+  server <- function(input, output) {
+    #---------------------------------------------------------------------------
+    output$raster_plot <- renderPlot(NULL)
+    
+    # Create a reactiveValues object to store the selections
+    selected_values <- reactiveValues()
+    
+    # Create a reactiveValue to store variable selection
+    select_variable <- reactiveValues()
+    
+    # Initialize the reactiveValues object with empty selections
+    for (dimension_name in dimension_names) {
+      selected_values[[dimension_name]] <- NULL
+    }
+    #---------------------------------------------------------------------------
+    # Dynamically generate selectInput widgets
+    output$dimension_inputs <- renderUI({
+      dimension_inputs <- lapply(seq_along(dimension_names), function(i) {
+        dimension_name <- dimension_names[i]
+        selectInput(
+          dimension_name,
+          label = paste("Select", dimension_name),
+          # choices = dimension_choices[[i]],
+          choices = ( c(eval(parse(text = paste0(filtered_names[i], "_table$values", sep="")))) )
+          # selected = selected_values[[dimension_name]]  # Set the initial selection
+        )
+      })
+      do.call(tagList, dimension_inputs)
+    })
+    #---------------------------------------------------------------------------
+    # Update the selected_values whenever a user makes a selection
+    observe({
+      for (dimension_name in dimension_names) {
+        selected_values[[dimension_name]] <- input[[dimension_name]]
+        output$raster_plot <- renderPlot(NULL)
+        
+      }
+    })
+    #---------------------------------------------------------------------------
+    # Display the selected dimensions
+    output$selected_dimensions <- renderText({
+      selected_dims <<- sapply(dimension_names, function(dimension_name) {
+        selected_value <- selected_values[[dimension_name]]
+        return(paste(dimension_name, ":", selected_value))
+      })
+      paste(selected_dims, collapse = ", ")
+    })
+    #---------------------------------------------------------------------------
+    # Update the selected variables whenever a user makes a selection
+    observeEvent(input$select_var, {
+      kotz <<- unlist(strsplit(input$select_var, " = "))[1]
+      #kotz <<- unlist(strsplit(input$select_var))[1]
+      output$raster_plot <- renderPlot(NULL)
+    })
+    #---------------------------------------------------------------------------
+    # Create and plot the raster based on user selections
+    observeEvent(input$create_button, {
+      
+      output$raster_plot <- renderPlot({ 
+        variable <- ncvar_get(nc, kotz)
+        
+        # Create the raster based on user selections
+        
+        if (length(dimension_names)==1) {
+          # if (length(dimension_names)==1) {
+          
+            test <- unlist(strsplit(selected_dims[[1]], " "))
+            time <- unlist(strsplit(selected_dims[[1]], " "))[3]
+            rm(test)
+          
+            time <- paste(unlist(strsplit(selected_dims[[1]], " "))[3])
+            dim_time <- as.integer(time_table[time_table$values==time, 1])
+
+            r_brick_netcdf <<- raster::brick( path,
+                                              varname = kotz,  # The variable name (e.g. 'altitude' or 'precipitation')
+                                              stopIfNotEqualSpaced = FALSE )
+
+            if (isTRUE(must_rotate)) {
+              r_brick_netcdf <<- raster::rotate(r_brick_netcdf)
+            }
+
+            r_single <- r_brick_netcdf[[dim_time]]
+
+            m <- gplot(r_single) +
+              geom_tile(aes(fill = value)) +
+              facet_wrap(~ variable) +
+              scale_fill_gradientn(colours = terrain.colors(10)) +
+              coord_equal()
+            plot(m)
+        } # *** End of 'if (length(dimension_names)==1) {' ***
+        
+        if (length(dimension_names)==2) {
+          depth <- paste(unlist(strsplit(selected_dims[[2]], " "))[3],
+                         unlist(strsplit(selected_dims[[2]], " "))[4], sep=" ")
+          time <- paste(unlist(strsplit(selected_dims[[1]], " "))[3])
+
+          dim_01 <- as.integer(lev_table[lev_table$values == depth, 1])
+          dim_time <- as.integer(time_table[time_table$values==time, 1])
+
+          r_brick_netcdf <<- raster::brick(path,
+                                           varname = kotz,  # The variable name (e.g. 'altitude' or 'precipitation')
+                                           lvar=4, # (default=3). To select the 'level variable' (3rd dimension variable) to use, if the file has 4 dimensions (e.g. depth instead of time)
+                                           level=dim_time, # select the 'level' (4th dimension variable) to use, if the file has 4 dimensions, e.g. to create a RasterBrick of weather over time at a certain height.
+                                           stopIfNotEqualSpaced = FALSE)
+          if (isTRUE(must_rotate)) {
+            r_brick_netcdf <<- raster::rotate(r_brick_netcdf)
+          }
+
+          r_single <- r_brick_netcdf[[dim_01]]
+
+          m <- gplot(r_single) +
+            geom_tile(aes(fill = value)) +
+            facet_wrap(~ variable) +
+            scale_fill_gradientn(colours = terrain.colors(10)) +
+            coord_equal()
+          plot(m)
+        } # *** End of 'if (length(dimension_names)==2) {' ***
+        
+        # Create the raster based on user selections
+      })  # *** End of 'output$raster_plot <- renderPlot(' ***
+    })  # *** End of 'observeEvent(input$create_button' {' ***
+      
+      
+    ############################################################################
+    ####  Cancel and Stop button
+    observeEvent(input$done, {
+      # returnValue <- menuR
+      stopApp()
+    })
+    
+    observeEvent(input$cancel, {
+      # returnValue <- menuR
+      stopApp()
+    })
+    ############################################################################
+    ############################################################################
+    ############################################################################
+  } # ** End of 'server <- function(' **
+  
+  
+  ##############################################################################
+  # run shiny app
+  shiny::runGadget(ui, server,viewer = shiny::dialogViewer("Plot map of selected netcdf variable", 
+                                                           width = 900, 
+                                                           height = 1000))
+  
+}  # ** End of '' *FUNC_define_var_and_dims_to_plot*
+
+# FUNC_define_var_and_dims_to_plot()
+
+################################################################################
+################################################################################
+###   - Function 5: Load own raster or define area to clip netcdf with
+if (exists("Func_select_area")) { rm(Func_select_area) }
+Func_select_area <- function() {
+  library(leaflet)
+  library(leaflet.extras)
+  library(mapedit)
+  library(raster)
+  ui <- miniPage(
+    gadgetTitleBar("Clipping of the raster file"),
+    miniContentPanel(
+      #-------------------------------------------------------------------------
+      titlePanel("Define your working area:"),
+      
+      sidebarLayout(
+        sidebarPanel(
+          radioButtons("file_type","Select a file type:", choices = c("Load a raster file", "Define own area"), inline=F),
+          conditionalPanel(
+            condition = "input.file_type == 'Load a raster file'",
+            fileInput("raster_file", "Choose a raster file:")
+          ),
+          
+          conditionalPanel(
+            condition = "input.file_type == 'Define own area'",
+            actionButton("draw_area", "Draw Area"),
+            helpText("Click the 'Draw Area' button and draw your working area on the map.")
+          ),
+          
+          conditionalPanel(
+            condition = "input.file_type == 'Load a raster file'", # && !is.null(input$raster_file))",
+            checkboxInput("clip.checkbox", label = "Clip the netcdf?", value = FALSE),
+            
+            conditionalPanel(
+              condition = "clip.checkbox",
+              helpText("The 'Clipping' is done as soon as you click on the 'Done' button in the upper right corner. The clipped netcdf with the name 'clipped_nc' is then available for further editing.")
+            )
+          ) # ** End of 'conditionalPanel(' **
+        ),
+        mainPanel(
+          leafletOutput("map")
+        )
+      )
+    )
+  )
+  
+  
+  server <- function(input, output, session) {
+    
+    # Define a reactive variable to store the checkbox value
+    checkbox_value <- reactiveVal(FALSE)
+    
+    observe({
+      checkbox_value(input$clip.checkbox)
+      
+      # Store the checkbox value globally if it's true
+      if (checkbox_value()) {
+        clipping_yes <<- TRUE
+      } else {
+        clipping_yes <<- FALSE
+      }
+    })
+    
+    
+    # here define the maps to show etc
+    output$map <- renderLeaflet({
+      leaflet() %>%
+        # Base groups
+        addTiles(group = "OSM (default)") %>%
+        addProviderTiles(providers$Esri.WorldTerrain, group = "ESRI Terrain")  %>%
+        addProviderTiles(providers$Esri.WorldImagery, group = "Satellite")   %>%
+        addProviderTiles(providers$CartoDB.Positron, group = "Carto")  %>%
+        #---
+        # addRasterImage(raster::raster(test_raster[[1]]), group = "Netcdf raster file") %>%
+        #---
+        addLayersControl(
+          baseGroups = c("OSM (default)", 
+                         "ESRI Terrain",
+                         "Satellite",
+                         "Carto"),
+          # overlayGroups = c("Netcdf raster file"),
+          options = layersControlOptions(collapsed = TRUE)
+        ) %>%
+        
+        setView(lng = -0, lat = 0, zoom = 1)
+    })
+    
+    #---------------------------------------------------------------------------
+    observeEvent(input$draw_area, {
+      leafletProxy("map") %>%
+        addDrawToolbar(targetGroup = 'drawArea', editOptions = editToolbarOptions(
+          selectedPathOptions = selectedPathOptions() ),
+          polylineOptions = FALSE,
+          markerOptions = FALSE,
+          circleMarkerOptions = FALSE
+        ) %>%
+        clearShapes()
+    })
+    
+    #---------------------------------------------------------------------------
+    observe({
+      leafletProxy("map") %>%
+        clearShapes()
+      
+      if (input$file_type == "Load a raster file" && !is.null(input$raster_file)) {
+        own_raster_data <<- raster::raster(input$raster_file$datapath)
+        bounds <<- raster::extent(own_raster_data)
+        leafletProxy("map") %>%
+          addRasterImage(own_raster_data, group = "Own raster file") %>%
+          fitBounds(bounds[1], bounds[3], bounds[2], bounds[4]) %>%
+          # Layers control
+          addLayersControl(
+            baseGroups = c("OSM (default)", 
+                           "ESRI Terrain",
+                           "Satellite",
+                           "Carto"),
+            overlayGroups = c("Own raster file"),
+            options = layersControlOptions(collapsed = FALSE)
+          )
+      }
+    })
+    
+    ############################################################################
+    ###   - observe cancel and done actionButton
+    
+    # When the Done button is clicked, return a value
+    observeEvent(input$cancel, {
+      stopApp()
+    })
+    
+    # When the Done button is clicked, return a value
+    observeEvent(input$done, {
+      
+      # returnValue <- ...
+      stopApp()
+    })
+  }  # ** End of 'server <- ' **
+  
+  ##############################################################################
+  shiny::runGadget(ui, server,viewer = shiny::dialogViewer("Load own raster file or define area to clip netcdf data", 
+                                                           width = 900, 
+                                                           height = 800))
+  if(isTRUE(clipping_yes)){
+    print("YES, YES, YES")
+    clipped_nc_brick <<- crop(r_brick_netcdf, extent(own_raster_data))
+  }
+}
+
+# Func_select_area()
+################################################################################
+################################################################################
+################################################################################
+
+setwd(choose.dir(caption = "Select the directory with the netcdf files and set it as working path"))
+rm(list= ls()[!(ls() %in% c('FUNC_load',
+                            'FUNC_variable_and_dims_data', 
+                            # 'FUNC_define_var_to_plot',
+                            "FUNC_define_var_and_dims_to_plot",
+                            'Func_select_area',
+                            'path',
+                            'temp.nc'))])
+
+FUNC_load()
+FUNC_variable_and_dims_data(nc_data=temp.nc)
+FUNC_define_var_and_dims_to_plot()
+Func_select_area()
+
+#_______________________________________________________________________________
+raster::plot(clipped_nc_brick)
+nlayers(clipped_nc_brick)
+
+###
+e <- extent(own_raster_data)
+# coerce to a SpatialPolygons object
+p <- as(e, 'SpatialPolygons')
+###
+
+raster::plot(clipped_nc_brick[[1]])
+plot(p, add=TRUE)
+#_______________________________________________________________________________
