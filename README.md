@@ -2,8 +2,7 @@
 
 (Note: You might also be interested in the Bathymetric Projection code https://github.com/pipeben/Bathymetric-Projection)
 
-This is an R-code that allows to easily manage GIS processes for bringing General Circulation Models (GCM) into Regional or Local Circulation Models (RCM or LCM).
-It includes all necessary functions.
+This is an R-code that allows to easily manage GIS processes for bringing General Circulation Models (GCM) into Regional or Local Circulation Models (RCM or LCM). It includes all necessary functions.
 
 Climate change studies requiere the outputs of GCM across different scenarios to be used as future data (RCPs 2.6, 4.5, 6.0, 8.5). However, these outputs are avaliable only at a global scale, with coarse spatial resolution (1° or higher). Therefore, Global GCMs are not useful for more regional or local scale studies.
 
